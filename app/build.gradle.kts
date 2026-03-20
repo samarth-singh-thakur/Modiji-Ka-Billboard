@@ -50,7 +50,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     
     implementation(libs.mlkit.image.labeling)
-    implementation(libs.mlkit.object.detection)
+    implementation(libs.mlkit.`object`.detection)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
