@@ -22,9 +22,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
@@ -37,6 +44,7 @@ import com.google.mlkit.vision.objects.ObjectDetection
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import com.samarth.modijiownsthisbillboard.ui.theme.ModijiOwnsThisBillboardTheme
 import java.util.concurrent.Executors
+import kotlin.math.max
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -133,10 +141,10 @@ fun ObjectDetectionView() {
                         val rotation = imageProxy.imageInfo.rotationDegrees
                         val image = InputImage.fromMediaImage(mediaImage, rotation)
                         val currentImageSize = Size(image.width, image.height)
-                        
+
                         objectDetector.process(image)
                             .addOnSuccessListener { objects ->
-                                detectedObjects = objects.map { 
+                                detectedObjects = objects.map {
                                     DetectedObject(
                                         it.boundingBox,
                                         it.labels.map { label -> label.text },
@@ -175,28 +183,30 @@ fun ObjectDetectionView() {
         Canvas(modifier = Modifier.fillMaxSize()) {
             detectedObjects.forEach { obj ->
                 val rect = obj.boundingBox
-                
-                // When rotation is 90 or 270, width and height are swapped
+
                 val isRotated = obj.rotation == 90 || obj.rotation == 270
                 val imageWidth = if (isRotated) obj.imageSize.height else obj.imageSize.width
                 val imageHeight = if (isRotated) obj.imageSize.width else obj.imageSize.height
-                
+
                 val scaleX = size.width / imageWidth
                 val scaleY = size.height / imageHeight
 
-                // Map coordinates from image space to view space
-                // This is a simplified mapping that might need adjustment based on PreviewView's scale type
+                val left = rect.left * scaleX
+                val top = rect.top * scaleY
+                val boxWidth = (rect.right - rect.left) * scaleX
+                val boxHeight = (rect.bottom - rect.top) * scaleY
+                val squareSide = max(boxWidth, boxHeight)
+                val horizontalInset = (squareSide - boxWidth) / 2f
+                val verticalInset = (squareSide - boxHeight) / 2f
+
                 drawRect(
                     color = Color.Red,
-                    topLeft = androidx.compose.ui.geometry.Offset(
-                        rect.left * scaleX,
-                        rect.top * scaleY
+                    topLeft = Offset(
+                        x = left - horizontalInset,
+                        y = top - verticalInset
                     ),
-                    size = androidx.compose.ui.geometry.Size(
-                        (rect.right - rect.left) * scaleX,
-                        (rect.bottom - rect.top) * scaleY
-                    ),
-                    style = Stroke(width = 2.dp.toPx())
+                    size = ComposeSize(squareSide, squareSide),
+                    style = Stroke(width = 3.dp.toPx())
                 )
             }
         }
