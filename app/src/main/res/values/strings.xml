@@ -1,6 +1,3 @@
 <resources>
-    <string name="app_name">Billboard Detector</string>
-    <string name="camera_permission_rationale">Camera permission is required to detect billboards in real time.</string>
-    <string name="camera_permission_denied">Camera permission denied. Enable it in system settings to continue.</string>
-    <string name="camera_loading">Starting camera…</string>
+    <string name="app_name">ModijiOwnsThisBillboard</string>
 </resources>
