@@ -49,6 +49,11 @@ import com.samarth.modijiownsthisbillboard.ui.theme.ModijiOwnsThisBillboardTheme
 import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.max
+import kotlin.math.min
+
+private const val TAG = "ObjectDetectionView"
+private const val MIN_CLASSIFICATION_CONFIDENCE = 0.55f
+private const val MAX_LABELS_ON_SCREEN = 3
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,23 +104,43 @@ fun CameraScreen() {
 
 data class DetectedObject(
     val boundingBox: Rect,
-    val displayLabel: String,
+    val displayLines: List<String>,
     val imageSize: Size,
     val rotation: Int
 )
 
-private fun formatDetectedLabel(labels: List<com.google.mlkit.vision.objects.DetectedObject.Label>): String {
-    val bestLabel = labels.maxByOrNull { it.confidence }
-    return bestLabel?.text
-        ?.takeIf { it.isNotBlank() }
-        ?.replaceFirstChar { char ->
-            if (char.isLowerCase()) {
-                char.titlecase(Locale.getDefault())
-            } else {
-                char.toString()
-            }
+private data class FormattedLabel(
+    val displayLines: List<String>,
+    val bestConfidence: Float?
+)
+
+private fun formatLabelText(text: String): String {
+    return text.replaceFirstChar { char ->
+        if (char.isLowerCase()) {
+            char.titlecase(Locale.getDefault())
+        } else {
+            char.toString()
         }
-        ?: "Unclassified"
+    }
+}
+
+private fun formatDetectedLabel(labels: List<com.google.mlkit.vision.objects.DetectedObject.Label>): FormattedLabel {
+    val sortedLabels = labels.sortedByDescending { it.confidence }
+    val displayLines = if (sortedLabels.isEmpty()) {
+        listOf("No labels")
+    } else {
+        sortedLabels
+            .take(MAX_LABELS_ON_SCREEN)
+            .map { label ->
+                val labelName = label.text.takeIf { it.isNotBlank() }?.let(::formatLabelText) ?: "Unknown"
+                "$labelName (${String.format(Locale.US, "%.2f", label.confidence)})"
+            }
+    }
+
+    return FormattedLabel(
+        displayLines = displayLines,
+        bestConfidence = sortedLabels.firstOrNull()?.confidence
+    )
 }
 
 @Composable
@@ -143,6 +168,7 @@ fun ObjectDetectionView() {
     }
     val labelPadding = with(density) { 6.dp.toPx() }
     val labelCornerRadius = with(density) { 6.dp.toPx() }
+    val lineHeight = labelTextPaint.fontSpacing
 
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
@@ -181,17 +207,43 @@ fun ObjectDetectionView() {
 
                         objectDetector.process(image)
                             .addOnSuccessListener { objects ->
-                                detectedObjects = objects.map {
-                                    DetectedObject(
-                                        boundingBox = it.boundingBox,
-                                        displayLabel = formatDetectedLabel(it.labels),
-                                        imageSize = currentImageSize,
-                                        rotation = rotation
+                                detectedObjects = objects.mapNotNull { detectedObject ->
+                                    val formattedLabel = formatDetectedLabel(detectedObject.labels)
+                                    val bestConfidence = formattedLabel.bestConfidence
+
+                                    Log.d(
+                                        TAG,
+                                        buildString {
+                                            append("Detected box=")
+                                            append(detectedObject.boundingBox)
+                                            append(", labels=")
+                                            append(
+                                                if (detectedObject.labels.isEmpty()) {
+                                                    "[]"
+                                                } else {
+                                                    detectedObject.labels.joinToString(prefix = "[", postfix = "]") { label ->
+                                                        val labelName = label.text.takeIf { it.isNotBlank() } ?: "<blank>"
+                                                        "$labelName:${String.format(Locale.US, "%.2f", label.confidence)}"
+                                                    }
+                                                }
+                                            )
+                                        }
                                     )
+
+                                    if (bestConfidence == null || bestConfidence < MIN_CLASSIFICATION_CONFIDENCE) {
+                                        null
+                                    } else {
+                                        DetectedObject(
+                                            boundingBox = detectedObject.boundingBox,
+                                            displayLines = formattedLabel.displayLines,
+                                            imageSize = currentImageSize,
+                                            rotation = rotation
+                                        )
+                                    }
                                 }
                             }
                             .addOnFailureListener { e ->
-                                Log.e("ObjectDetectionView", "Detection failed", e)
+                                Log.e(TAG, "Detection failed", e)
                             }
                             .addOnCompleteListener {
                                 imageProxy.close()
@@ -209,7 +261,7 @@ fun ObjectDetectionView() {
                         imageAnalysis
                     )
                 } catch (e: Exception) {
-                    Log.e("ObjectDetectionView", "Use case binding failed", e)
+                    Log.e(TAG, "Use case binding failed", e)
                 }
 
                 previewView
@@ -248,28 +300,31 @@ fun ObjectDetectionView() {
                     style = Stroke(width = 3.dp.toPx())
                 )
 
-                val textWidth = labelTextPaint.measureText(obj.displayLabel)
-                val textBaseline = boxTop - labelPadding - labelTextPaint.fontMetrics.bottom
-                val backgroundTop = max(0f, textBaseline + labelTextPaint.fontMetrics.top - labelPadding)
-                val backgroundBottom = textBaseline + labelTextPaint.fontMetrics.bottom + labelPadding
-                val backgroundRight = boxLeft + textWidth + (labelPadding * 2)
+                val longestLineWidth = obj.displayLines.maxOfOrNull { line -> labelTextPaint.measureText(line) } ?: 0f
+                val backgroundHeight = (lineHeight * obj.displayLines.size) + (labelPadding * 2)
+                val preferredTop = boxTop - backgroundHeight - labelPadding
+                val backgroundTop = max(0f, preferredTop)
+                val textStartY = backgroundTop + labelPadding - labelTextPaint.fontMetrics.top
+                val backgroundRight = min(size.width, boxLeft + longestLineWidth + (labelPadding * 2))
 
                 drawContext.canvas.nativeCanvas.apply {
                     drawRoundRect(
                         boxLeft,
                         backgroundTop,
                         backgroundRight,
-                        backgroundBottom,
+                        backgroundTop + backgroundHeight,
                         labelCornerRadius,
                         labelCornerRadius,
                         labelBackgroundPaint
                     )
-                    drawText(
-                        obj.displayLabel,
-                        boxLeft + labelPadding,
-                        textBaseline,
-                        labelTextPaint
-                    )
+                    obj.displayLines.forEachIndexed { index, line ->
+                        drawText(
+                            line,
+                            boxLeft + labelPadding,
+                            textStartY + (index * lineHeight),
+                            labelTextPaint
+                        )
+                    }
                 }
             }
         }
