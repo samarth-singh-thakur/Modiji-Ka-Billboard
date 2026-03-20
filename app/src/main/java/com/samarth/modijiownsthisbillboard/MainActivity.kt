@@ -2,6 +2,7 @@ package com.samarth.modijiownsthisbillboard
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Paint
 import android.graphics.Rect
 import android.os.Bundle
 import android.util.Log
@@ -34,7 +35,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -43,6 +46,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.objects.ObjectDetection
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import com.samarth.modijiownsthisbillboard.ui.theme.ModijiOwnsThisBillboardTheme
+import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.max
 
@@ -95,10 +99,24 @@ fun CameraScreen() {
 
 data class DetectedObject(
     val boundingBox: Rect,
-    val labels: List<String>,
+    val displayLabel: String,
     val imageSize: Size,
     val rotation: Int
 )
+
+private fun formatDetectedLabel(labels: List<com.google.mlkit.vision.objects.DetectedObject.Label>): String {
+    val bestLabel = labels.maxByOrNull { it.confidence }
+    return bestLabel?.text
+        ?.takeIf { it.isNotBlank() }
+        ?.replaceFirstChar { char ->
+            if (char.isLowerCase()) {
+                char.titlecase(Locale.getDefault())
+            } else {
+                char.toString()
+            }
+        }
+        ?: "Unclassified"
+}
 
 @Composable
 fun ObjectDetectionView() {
@@ -106,6 +124,25 @@ fun ObjectDetectionView() {
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
     var detectedObjects by remember { mutableStateOf(emptyList<DetectedObject>()) }
+    val density = LocalDensity.current
+
+    val labelTextPaint = remember(density) {
+        Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = with(density) { 18.dp.toPx() }
+            isAntiAlias = true
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+        }
+    }
+    val labelBackgroundPaint = remember {
+        Paint().apply {
+            color = android.graphics.Color.argb(220, 0, 180, 0)
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+    }
+    val labelPadding = with(density) { 6.dp.toPx() }
+    val labelCornerRadius = with(density) { 6.dp.toPx() }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
@@ -146,10 +183,10 @@ fun ObjectDetectionView() {
                             .addOnSuccessListener { objects ->
                                 detectedObjects = objects.map {
                                     DetectedObject(
-                                        it.boundingBox,
-                                        it.labels.map { label -> label.text },
-                                        currentImageSize,
-                                        rotation
+                                        boundingBox = it.boundingBox,
+                                        displayLabel = formatDetectedLabel(it.labels),
+                                        imageSize = currentImageSize,
+                                        rotation = rotation
                                     )
                                 }
                             }
@@ -198,16 +235,42 @@ fun ObjectDetectionView() {
                 val squareSide = max(boxWidth, boxHeight)
                 val horizontalInset = (squareSide - boxWidth) / 2f
                 val verticalInset = (squareSide - boxHeight) / 2f
+                val boxLeft = left - horizontalInset
+                val boxTop = top - verticalInset
 
                 drawRect(
-                    color = Color.Red,
+                    color = Color(0xFF00E676),
                     topLeft = Offset(
-                        x = left - horizontalInset,
-                        y = top - verticalInset
+                        x = boxLeft,
+                        y = boxTop
                     ),
                     size = ComposeSize(squareSide, squareSide),
                     style = Stroke(width = 3.dp.toPx())
                 )
+
+                val textWidth = labelTextPaint.measureText(obj.displayLabel)
+                val textBaseline = boxTop - labelPadding - labelTextPaint.fontMetrics.bottom
+                val backgroundTop = max(0f, textBaseline + labelTextPaint.fontMetrics.top - labelPadding)
+                val backgroundBottom = textBaseline + labelTextPaint.fontMetrics.bottom + labelPadding
+                val backgroundRight = boxLeft + textWidth + (labelPadding * 2)
+
+                drawContext.canvas.nativeCanvas.apply {
+                    drawRoundRect(
+                        boxLeft,
+                        backgroundTop,
+                        backgroundRight,
+                        backgroundBottom,
+                        labelCornerRadius,
+                        labelCornerRadius,
+                        labelBackgroundPaint
+                    )
+                    drawText(
+                        obj.displayLabel,
+                        boxLeft + labelPadding,
+                        textBaseline,
+                        labelTextPaint
+                    )
+                }
             }
         }
     }
